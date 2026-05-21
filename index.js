@@ -1,4 +1,3 @@
- 
 const express = require('express');
 const dotenv = require('dotenv');
 const pino = require('pino');
@@ -10,10 +9,14 @@ const app = express();
 const logger = pino({ transport: { target: 'pino-pretty' } });
 
 // parse incoming JSON request bodies
-app.json());
+app.use(express.json());
+app.use((req, res, next) => {
+  console.log(req.method, req.url);
+  next();
+});
 
 // all our log routes are mounted here
-app.use('/', logRoutes);
+app.use(logRoutes);
 
 // handle routes that dont exist
 app.use((req, res) => {
