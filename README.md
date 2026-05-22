@@ -137,3 +137,4 @@ A simple API key check via x-api-key header protects all endpoints. In a product
 2. Understanding how Express maps to Java Spring Boot concepts I already knew (routes = @RestController, controllers = service logic, middleware = Spring filters, db = repository layer)
 3. Debugging the JSONB hash mismatch issue
 4. Docker implementation assistance
+5. Assist in writing code
