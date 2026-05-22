@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+      POSTGRES_DB: demo_log
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build: .
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      DB_USER: postgres
+      DB_HOST: db
+      DB_NAME: demo_log
+      DB_PASSWORD: postgres123
+      DB_PORT: 5432
+      API_KEY: myapikey123
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
