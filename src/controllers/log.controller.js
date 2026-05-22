@@ -1,38 +1,35 @@
 const pool = require('../db/index');
 const { computeHash } = require('../utils/hash');
-const { v4: uuidv4 } = require('uuid');
 const pino = require('pino');
 
 const logger = pino({ transport: { target: 'pino-pretty' } });
 
-//fetch the last hash, computes a new one and inserts the row
 async function addLog(req, res) {
   const { name, action, payload } = req.body;
+
   if (!name || !action) {
     return res.status(400).json({ error: 'name and action are required' });
   }
 
   try {
-    // fetch the most recent entry so we can grab its hash as the previous hash
     const lastEntry = await pool.query(
       'SELECT hash FROM logs ORDER BY id DESC LIMIT 1'
     );
 
-    // if this is the very first entry then prevHash is empty string
+    // first entry gets an empty string as prev hash, everything else chains from the last one
     const prevHash = lastEntry.rows.length > 0 ? lastEntry.rows[0].hash : '';
+    const safePayload = payload || {};
 
-    // compute the new hash by combining prevHash with current entry data
-    const hash = computeHash(prevHash, name, action, payload || {});
+    const hash = computeHash(prevHash, name, action, safePayload);
 
     const result = await pool.query(
       `INSERT INTO logs (name, action, payload, hash, prev_hash)
        VALUES ($1, $2, $3, $4, $5)
        RETURNING *`,
-      [name, action, payload || {}, hash, prevHash]
+      [name, action, JSON.stringify(safePayload), hash, prevHash]
     );
 
     logger.info({ id: result.rows[0].id, action }, 'new log entry added to chain');
-
     return res.status(201).json(result.rows[0]);
 
   } catch (err) {
@@ -41,7 +38,6 @@ async function addLog(req, res) {
   }
 }
 
-// Also recomputes the hash on the fly to tell the caller if this entry is still valid
 async function getLog(req, res) {
   const { id } = req.params;
 
@@ -54,7 +50,7 @@ async function getLog(req, res) {
 
     const entry = result.rows[0];
 
-    // recompute the hash from the stored data and compare it with what we saved
+    // recompute and compare, if someone touched the row this will not match
     const expectedHash = computeHash(
       entry.prev_hash,
       entry.name,
@@ -62,12 +58,9 @@ async function getLog(req, res) {
       entry.payload
     );
 
-    const isValid = expectedHash === entry.hash;
-
-    // return the entry along with a chain_valid flag so caller knows the status
     return res.status(200).json({
       ...entry,
-      chain_valid: isValid
+      chain_valid: expectedHash === entry.hash
     });
 
   } catch (err) {
@@ -76,7 +69,6 @@ async function getLog(req, res) {
   }
 }
 
-// Verify the entire chain from first entry to last
 async function verifyChain(req, res) {
   try {
     const result = await pool.query('SELECT * FROM logs ORDER BY id ASC');
@@ -89,7 +81,6 @@ async function verifyChain(req, res) {
     for (let i = 0; i < entries.length; i++) {
       const entry = entries[i];
 
-      // recompute hash for this entry using its stored data
       const expectedHash = computeHash(
         entry.prev_hash,
         entry.name,
@@ -97,7 +88,7 @@ async function verifyChain(req, res) {
         entry.payload
       );
 
-      // if recomputed hash does not match stored hash, data was tampered
+      // hash mismatch means the row data was edited after insert
       if (expectedHash !== entry.hash) {
         return res.status(200).json({
           status: 'fail',
@@ -106,7 +97,7 @@ async function verifyChain(req, res) {
         });
       }
 
-      // check if the prev_hash of the current entry must exactly match the hash of the previous entry
+      // prev_hash must match the actual hash of the previous row
       if (i > 0 && entry.prev_hash !== entries[i - 1].hash) {
         return res.status(200).json({
           status: 'fail',
@@ -116,7 +107,6 @@ async function verifyChain(req, res) {
       }
     }
 
-    // if we reach here all entries passed verification
     return res.status(200).json({
       status: 'pass',
       total_entries: entries.length,
@@ -129,14 +119,11 @@ async function verifyChain(req, res) {
   }
 }
 
-// Export logs with optional filters
-// Supports filtering by date range and also by name by calling params
-// All filters are optional so calling without any params returns everything
 async function exportLogs(req, res) {
   const { from, to, name } = req.query;
 
   try {
-    // start with a base query and dynamically append conditions as needed
+    // build query dynamically based on whatever filters are passed
     let query = 'SELECT * FROM logs WHERE 1=1';
     const params = [];
 
